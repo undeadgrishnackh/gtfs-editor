@@ -13,12 +13,14 @@ var GtfsEditor = GtfsEditor || {};
   var keyCodes = {
     // o: offset times
     offset: 79,
-    // insert new trip (really, duplicate this trip . . .)
+    // i: insert new trip (really, duplicate and offset this trip . . .)
     insert: 73,
     // delete trip (also requires shift key, as coded in the function)
     deleteTrip: 46,
     // also backspace, for laptop users with no delete key...
-    deleteTripAlternate: 8
+    deleteTripAlternate: 8,
+    // b: toggle time display, arrival, departure, or both
+    toggleArrDep: 66
   };
 
   /**
@@ -466,8 +468,8 @@ var GtfsEditor = GtfsEditor || {};
 
       _.each(trips, function(trip) {
         // find the affected stoptimes
-        var fromCell = coords[1] - 4;
-        var toCell = coords[3] - 4;
+        var fromCell = this.translateColIndex(coords[1]);
+        var toCell = this.translateColIndex(coords[3]);
         var from = Math.floor(fromCell / 2);
         var to = Math.floor(toCell / 2) + 1;
         var patternStops = instance.pattern.get('patternStops');
@@ -485,7 +487,7 @@ var GtfsEditor = GtfsEditor || {};
           // if we're not looking at the first stoptime, and/or the first cell is even, update arrival time
           // if the first cell is odd and this is the first stoptime, we're only updating the departureTime.
           // but don't update interpolated times, leave them interpolated
-          if ((idx !== 0 || fromCell % 2 === 0) && st.arrivalTime != null)
+          if ((idx !== 0 || fromCell % 2 === 0 || instance.display != 'all') && st.arrivalTime != null)
             st.arrivalTime += offset;
 
           // same idea at the end. if the tocell is odd or we're in the middle, update both arrival and departure times
@@ -607,6 +609,8 @@ var GtfsEditor = GtfsEditor || {};
         });
 
         this.$container.handsontable('render');
+      } else if (e.keyCode == keyCodes.toggleArrDep) {
+        this.toggleArrDep();
       } else {
         // not a command, pass through
         commandFound = false;
@@ -696,8 +700,8 @@ var GtfsEditor = GtfsEditor || {};
         var instance = this;
 
         if (direction == 'east') {
-          var fromCol = start.col - 4;
-          var toCol = end.col - 4;
+          var fromCol = this.translateColIndex(start.col);
+          var toCol = this.translateColIndex(end.col);
 
           var initialPatternStop = Math.floor(fromCol / 2);
           var finalPatternStop = Math.floor(toCol / 2);
@@ -729,11 +733,10 @@ var GtfsEditor = GtfsEditor || {};
               var st = instance.findStopTimeByPatternStop(trip, ps);
 
               // edge condition at start if filling only departure
-              if ((fromCol % 2) == 1 && i == initialPatternStop) {
+              if ((fromCol % 2) == 1 && i == initialPatternStop && this.display == 'all') {
                 st.departureTime = st.arrivalTime + ps.defaultDwellTime;
                 continue;
               }
-
               var wasStopTimeCreated = false;
 
               // previously skipped, fill it in now
@@ -762,7 +765,8 @@ var GtfsEditor = GtfsEditor || {};
               // edge condition at end: we may be only filling the arrival time
               // but if we created the stop time, we should fill them both, since GTFS requires both an arrival
               // and departure time if either is specified
-              if (i != finalPatternStop || i == finalPatternStop && ((toCol % 2) == 1 || wasStopTimeCreated))
+              if (i != finalPatternStop || this.display != 'all' ||
+                i == finalPatternStop && ((toCol % 2) == 1 || wasStopTimeCreated))
                 st.departureTime = st.arrivalTime + ps.defaultDwellTime;
 
               trip.set('stopTimes', trip.get('stopTimes'));
@@ -775,8 +779,8 @@ var GtfsEditor = GtfsEditor || {};
           // update the relevant stop times
 
           // note that these are intentionally backwards
-          var fromCol = end.col - 4;
-          var toCol = start.col - 4;
+          var fromCol = this.translateColIndex(start.col);
+          var toCol = this.translateColIndex(end.col);
 
           var initialPatternStop = Math.floor(fromCol / 2);
           var finalPatternStop = Math.floor(toCol / 2);
@@ -808,7 +812,7 @@ var GtfsEditor = GtfsEditor || {};
               var st = instance.findStopTimeByPatternStop(trip, ps);
 
               // edge condition at start if filling only arrival
-              if ((fromCol % 2) == 0 && i == initialPatternStop) {
+              if ((fromCol % 2) == 0 && i == initialPatternStop && this.display == 'all') {
                 st.arrivalTime = st.departureTime - ps.defaultDwellTime;
                 continue;
               }
@@ -839,7 +843,8 @@ var GtfsEditor = GtfsEditor || {};
               // edge condition at end: we may be only filling the departure time
               // but if we created the stop time, we should fill them both, since GTFS requires both an arrival
               // and departure time if either is specified
-              if (i != finalPatternStop || i == finalPatternStop && ((toCol % 2) == 0 || wasStopTimeCreated))
+              if (i != finalPatternStop || this.display != 'all' ||
+                i == finalPatternStop && ((toCol % 2) == 0 || wasStopTimeCreated))
                 st.arrivalTime = st.departureTime - ps.defaultDwellTime;
 
               trip.set('stopTimes', trip.get('stopTimes'));
@@ -864,32 +869,101 @@ var GtfsEditor = GtfsEditor || {};
       }
     },
 
+    /**
+     * Toggle between having all columns displayed, having only arrival times displayed, and having only departure
+     * times displayed.
+     */
+     toggleArrDep: function () {
+       // figure out what we're doing
+       if (this.display == 'all') {
+         // switch to arr
+         var i = this.$container.handsontable('getInstance');
+         var s = i.getSettings();
+         s.columns = this.arrColumns;
+         s.colHeaders = this.singleHeaders;
+         s.colWidths = this.singleColWidths;
+         i.updateSettings(s);
+         this.display = 'arr';
+       } else if (this.display == 'arr') {
+         // switch to dep
+         var i = this.$container.handsontable('getInstance');
+         var s = i.getSettings();
+         s.columns = this.depColumns;
+         s.colHeaders = this.singleHeaders;
+         s.colWidths = this.singleColWidths;
+         i.updateSettings(s);
+         this.display = 'dep';
+       } else {
+         // switch to all
+         var i = this.$container.handsontable('getInstance');
+         var s = i.getSettings();
+         s.columns = this.allColumns;
+         s.colHeaders = this.allHeaders;
+         s.colWidths = this.allColWidths;
+         i.updateSettings(s);
+         this.display = 'all';
+       }
+     },
+
+    // Get what a column index would be on the full table, if some columns are hidden
+    // this function also encapsulates the offset created by the trip ID, etc. columns
+    // so arrival at patternStop 0 is index 0. If the index is to one of these columns,
+    // return value will be null.
+    translateColIndex: function (idx) {
+      // for now, the only hidden columns are arr/dep when showing a single time per stop
+      // eventually, we want to be able to hide specific stops as well (when we do 'show only major stops')
+      // we can just change this function then and everything should just work
+
+      if (idx < 4)
+        return null;
+
+      if (this.display == 'all')
+        return idx;
+
+      else if (this.display == 'arr')
+        return (idx - 4) * 2;
+
+      else if (this.display == 'dep')
+        return (idx - 4) * 2 + 1;
+    },
+
     render: function() {
       // render the template
       this.$el.html(ich['timetable-tpl'](this.pattern.toJSON()));
 
       // figure out what columns we're rendering
-      var columns = [this.attr('modified'), this.attr('tripId'), this.attr('blockId'), this.attr('tripHeadsign')];
+      this.allColumns = [this.attr('modified'), this.attr('tripId'), this.attr('blockId'), this.attr('tripHeadsign')];
+      this.arrColumns = [this.attr('modified'), this.attr('tripId'), this.attr('blockId'), this.attr('tripHeadsign')];
+      this.depColumns = [this.attr('modified'), this.attr('tripId'), this.attr('blockId'), this.attr('tripHeadsign')];
       // TODO: i18n
-      var headers = ['', 'Trip ID', 'Block ID', 'Trip headsign'];
+      this.allHeaders = ['', 'Trip ID', 'Block ID', 'Trip headsign'];
+      this.singleHeaders = ['', 'Trip ID', 'Block ID', 'Trip headsign'];
 
       var instance = this;
 
       // note: the merged header cells aren't actually merged, but depend on a really awful hack (in timetable.css) where the width of
       // two columns is hardcoded as the header width. As a side effect, these numbers must be exactly twice the width of the time
       // display cells
-      var colWidths = [15, 150, 150, 150];
+      this.allColWidths = [15, 150, 150, 150];
+
+      // column widths and headers when only arr/dep is displayed
+      this.singleColWidths = [15, 150, 150, 150];
 
       _.each(this.pattern.get('patternStops'), function(patternStop, idx) {
         // we put stopSequence here for loop routes
-        columns.push(instance.attr('stop:' + patternStop.stop.id + ':' + patternStop.stopSequence + ':arr'));
-        columns.push(instance.attr('stop:' + patternStop.stop.id + ':' + patternStop.stopSequence + ':dep'));
-        headers.push(patternStop.stop.stopName);
+        instance.allColumns.push(instance.attr('stop:' + patternStop.stop.id + ':' + patternStop.stopSequence + ':arr'));
+        instance.arrColumns.push(instance.attr('stop:' + patternStop.stop.id + ':' + patternStop.stopSequence + ':arr'));
+        instance.allColumns.push(instance.attr('stop:' + patternStop.stop.id + ':' + patternStop.stopSequence + ':dep'));
+        instance.depColumns.push(instance.attr('stop:' + patternStop.stop.id + ':' + patternStop.stopSequence + ':dep'));
+        instance.allHeaders.push(patternStop.stop.stopName);
         // dummy header, will be overwritten when cells are merged
-        headers.push('');
+        instance.allHeaders.push('');
 
-        colWidths.push(75);
-        colWidths.push(75);
+        instance.singleHeaders.push(patternStop.stop.stopName);
+
+        instance.allColWidths.push(75);
+        instance.allColWidths.push(75);
+        instance.singleColWidths.push(150);
       });
 
       // make a new trip, and since it's new it's been modified (from its previous state of non-existence)
@@ -907,15 +981,19 @@ var GtfsEditor = GtfsEditor || {};
         // also adding a column doesn't make sense
         // and adding a row (trip) causes display issues with handsontable
         contextMenu: false,
-        columns: columns,
-        colHeaders: headers,
-        colWidths: colWidths,
+
+        // default: show arr and dep
+        columns: this.allColumns,
+        colHeaders: this.allHeaders,
+        colWidths: this.allColWidths,
         beforeKeyDown: this.handleKeyDown,
         beforeAutofill: this.autofill,
         fillHandle: true,
         // we do this so that autofill will not create extra rows (issue 127)
         maxRows: this.collection.length
       });
+
+      this.display = 'all';
 
       // autofill will create extra rows. to prevent this, we set maxRows, but we have to update it
       // when trips are added or removed.
